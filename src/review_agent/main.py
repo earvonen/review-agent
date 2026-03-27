@@ -168,6 +168,45 @@ def _parse_review_verdict(model_text: str) -> tuple[bool | None, str]:
     return ok, reason
 
 
+def _mergeability_allows_review(full: dict[str, Any], pr_number: int) -> bool:
+    """
+    GitHub often returns mergeable=null while computing, and GitHub MCP minimal PR payloads
+    may omit ``mergeable`` entirely. Only skip when the API clearly says the PR cannot be
+    merged (conflicts / blocked). Otherwise proceed; ``merge_pull_request`` enforces reality.
+    """
+    mergeable = full.get("mergeable")
+    if mergeable is None:
+        mergeable = full.get("is_mergeable")
+    state_raw = full.get("mergeable_state") or full.get("mergeableState") or ""
+    state = str(state_raw).lower()
+
+    if mergeable is False:
+        logger.info(
+            "PR #%s not mergeable (mergeable=false, state=%s); waiting for a later poll",
+            pr_number,
+            state_raw or "(empty)",
+        )
+        return False
+
+    if state in ("dirty", "blocked"):
+        logger.info(
+            "PR #%s cannot merge yet (mergeable_state=%s); waiting for a later poll",
+            pr_number,
+            state,
+        )
+        return False
+
+    if mergeable is not True:
+        logger.info(
+            "PR #%s proceeding without mergeable=true (mergeable=%r mergeable_state=%r); "
+            "MCP may omit mergeable — merge step will validate",
+            pr_number,
+            mergeable,
+            state_raw or "(empty)",
+        )
+    return True
+
+
 def _pull_number_from_summary(pr_summary: dict[str, Any]) -> int | None:
     for key in ("number", "pullNumber", "pull_number"):
         v = pr_summary.get(key)
@@ -214,20 +253,7 @@ def process_pull(
         logger.info("PR #%s is draft; skipping", pr_number)
         return
 
-    mergeable = full.get("mergeable")
-    if mergeable is None:
-        mergeable = full.get("is_mergeable")
-    mergeable_state = str(full.get("mergeable_state") or full.get("mergeableState") or "")
-    if mergeable is None:
-        logger.info("PR #%s mergeable not computed yet; will retry next poll", pr_number)
-        return
-    if mergeable is not True:
-        logger.info(
-            "PR #%s not mergeable (mergeable=%s state=%s); waiting for a later poll",
-            pr_number,
-            mergeable,
-            mergeable_state,
-        )
+    if not _mergeability_allows_review(full, pr_number):
         return
 
     title = str(full.get("title") or "")

@@ -59,6 +59,6 @@ python -m review_agent
 - **Container:** `Containerfile` → `python -m review_agent`
 - **ImageStream / Tekton:** `deploy/imagestream.yaml`, `deploy/tekton/*.yaml`
 
-PRs that are **draft**, **not yet mergeable** (`mergeable: null` or `false`), or **missing an issue reference** are skipped (with logging); missing-issue cases are recorded so the same PR head is not retried until the SHA changes.
+PRs that are **draft**, clearly **not mergeable** (`mergeable: false` or `mergeable_state` `dirty` / `blocked`), or **missing an issue reference** are skipped (with logging). If `mergeable` is **missing or null** (common with GitHub MCP minimal responses or while GitHub is still computing), the agent **still runs the review**; the **`merge_pull_request`** MCP call decides whether the merge actually succeeds.
 
 After **`REVIEW_DRY_RUN_NO_MERGE`**, clear **`REVIEW_STATE_FILE`** or push a new commit on the PR to re-run the model and merge.
