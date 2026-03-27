@@ -1,0 +1,80 @@
+# Example OpenShift manifests. Adjust namespaces, image, and secrets for your cluster.
+#
+# GitHub PAT (repo scope): oc create secret generic review-agent-github --from-literal=token=YOUR_PAT -n <namespace>
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: review-agent
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: review-agent-config
+data:
+  # Repository and base branch for PRs to watch (must match PR base ref)
+  REVIEW_GIT_CLONE_URL: "https://github.com/earvonen/redhat-screensaver.git"
+  REVIEW_GIT_BRANCH: "test"
+  REVIEW_POLL_INTERVAL_SECONDS: "60"
+  REVIEW_STATE_FILE: "/var/lib/review-agent/state.json"
+  REVIEW_WORKSPACE_ROOT: "/var/lib/review-agent/workspaces"
+  LLAMA_STACK_BASE_URL: "http://llamastack-service:8321"
+  LLAMA_STACK_MODEL_ID: "vllm/MiniMax-M2.5"
+  REVIEW_TOOL_GROUP_IDS: "mcp-github"
+  # merge | squash | rebase
+  REVIEW_MERGE_METHOD: "merge"
+  # Optional: register MCP SSE endpoints at startup (JSON array)
+  # REVIEW_MCP_REGISTRATIONS_JSON: '[{"toolgroup_id":"mcp::github","mcp_uri":"http://github-mcp:8080/sse"}]'
+  # REVIEW_DRY_RUN_NO_MERGE: "true"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: review-agent
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: review-agent
+  template:
+    metadata:
+      labels:
+        app: review-agent
+    spec:
+      serviceAccountName: review-agent
+      containers:
+        - name: review-agent
+          image: image-registry.openshift-image-registry.svc:5000/agentic-demo/review-agent:latest
+          imagePullPolicy: Always
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+          envFrom:
+            - configMapRef:
+                name: review-agent-config
+          env:
+            - name: HOME
+              value: /var/lib/review-agent
+            - name: GITHUB_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: review-agent-github
+                  key: token
+            # - name: LLAMA_STACK_API_KEY
+            #   valueFrom:
+            #     secretKeyRef:
+            #       name: llama-stack-credentials
+            #       key: api-key
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/review-agent
+          resources:
+            requests:
+              cpu: "100m"
+              memory: 256Mi
+            limits:
+              memory: 2Gi
+      volumes:
+        - name: data
+          emptyDir: {}
