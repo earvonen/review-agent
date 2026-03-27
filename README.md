@@ -6,7 +6,7 @@ All **GitHub reads and writes** (list PRs, PR/issue details, file list, **merge*
 
 For each PR (when GitHub reports it as **mergeable** via MCP):
 
-1. Resolves a **linked GitHub issue** from the PR title/body (closing keywords like `Fixes #123`, then `#NNN` mentions).
+1. Resolves **linked GitHub issue number(s)** from the PR title/body. **Title** is processed first; in each segment the **last** closing-keyword line (`Fixes #44`, etc.) is preferred over earlier ones (avoids stale `closes #34` above a real `fixes #44`). It then tries each number via MCP `issue_read`. If every link fails (e.g. **issue deleted** / 410, 404, or MCP errors), it **still reviews** using the **PR title and body** as the specification.
 2. Optionally **clones** the repo at the base branch, **fetches** `pull/<n>/head`, and checks out the PR head for **workspace** tools (uses **`GITHUB_TOKEN`** only if set, for private HTTPS clone—same as Scribe).
 3. Runs **Llama Stack** with **`REVIEW_TOOL_GROUP_IDS`** (e.g. GitHub MCP) plus workspace tools; the model returns JSON  
    `{"addresses_spec": true|false, "reason": "..."}`.

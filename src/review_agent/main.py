@@ -26,7 +26,8 @@ from review_agent.state_store import ReviewStateStore
 logger = logging.getLogger(__name__)
 
 SYSTEM_PROMPT = """You are **Review**, an agent that decides whether a **GitHub pull request** adequately
-implements the linked **GitHub issue**.
+implements the **ticket specification** in the user message (normally a linked issue; if the issue could not be
+loaded, the user message supplies PR text and instructions instead).
 
 You may use **workspace** tools to read files in the local clone (already checked out at the PR head) and
 **GitHub MCP tools** if you need extra context from GitHub.
@@ -38,10 +39,10 @@ The JSON must have this exact shape:
 ```
 
 Rules:
-- `addresses_spec` is **true** only if the changes substantially satisfy the issue's stated requirements.
-- If the issue is vague, use your best judgment; prefer **false** if the link between the diff and the ticket
+- `addresses_spec` is **true** only if the changes substantially satisfy the stated requirements.
+- If the specification is vague, use your best judgment; prefer **false** if the link between the diff and the ticket
   is weak or missing.
-- `reason` should cite concrete evidence (files, behaviors) from the issue text and the change."""
+- `reason` should cite concrete evidence (files, behaviors) from the specification and the change."""
 
 
 def _register_mcp_endpoints(client: LlamaStackClient, settings: Settings) -> None:
@@ -269,21 +270,44 @@ def process_pull(
         )
         return
 
-    issue_n = issue_nums[0]
-    try:
-        issue = gh.get_issue(owner, repo, issue_n)
-    except Exception as e:
-        logger.exception("Failed to load issue #%s for PR #%s: %s", issue_n, pr_number, e)
-        state.record_outcome(
-            pr_number,
-            head_sha,
-            "llm_error",
-            {"detail": f"issue_fetch_failed: {e}"},
-        )
-        return
+    issue: dict[str, Any] | None = None
+    issue_n: int | None = None
+    load_errors: list[str] = []
+    for candidate in issue_nums:
+        try:
+            issue = gh.get_issue(owner, repo, candidate)
+            issue_n = candidate
+            break
+        except Exception as e:
+            load_errors.append(f"#{candidate}: {e}")
+            logger.warning(
+                "Could not load issue #%s for PR #%s: %s (trying next linked number if any)",
+                candidate,
+                pr_number,
+                e,
+            )
 
-    issue_title = str(issue.get("title") or "")
-    issue_body = str(issue.get("body") or "")
+    if issue is not None:
+        issue_title = str(issue.get("title") or "")
+        issue_body = str(issue.get("body") or "")
+        issue_n = issue_n or issue_nums[0]
+    else:
+        issue_n = issue_nums[0]
+        issue_title = f"Issue #{issue_nums[0]} (unavailable)"
+        issue_body = (
+            "None of the referenced GitHub issues could be loaded (e.g. deleted — HTTP 410, not found, or "
+            "MCP/Llama Stack error). "
+            f"Referenced numbers: {issue_nums}.\n\n"
+            f"Load attempts: {'; '.join(load_errors)}\n\n"
+            "Treat the **pull request title and description** as the specification. Decide whether the diff "
+            "implements that intent.\n\n"
+            "---\n\n"
+            f"**Pull request title:** {title}\n\n**Pull request body:**\n```\n{body or '(empty)'}\n```"
+        )
+        logger.warning(
+            "PR #%s: falling back to PR-only specification (no issue body); still running review",
+            pr_number,
+        )
 
     try:
         files = gh.list_pull_files(owner, repo, pr_number)
