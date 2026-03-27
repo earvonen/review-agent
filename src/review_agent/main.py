@@ -17,7 +17,7 @@ from review_agent.git_repo import (
     git_repo_summary,
     git_source_from_clone_url,
 )
-from review_agent.github_client import GitHubClient
+from review_agent.mcp_github import GitHubMcpClient
 from review_agent.issue_refs import extract_linked_issue_numbers
 from review_agent.json_util import parse_json_loose
 from review_agent.llama_tools import run_tool_assisted_fix
@@ -81,7 +81,7 @@ def _build_files_prompt_section(
     lines: list[str] = []
     total_patch = 0
     for i, f in enumerate(files[:max_files]):
-        name = str(f.get("filename") or "")
+        name = str(f.get("filename") or f.get("path") or "")
         status = str(f.get("status") or "")
         patch = f.get("patch")
         patch_s = patch if isinstance(patch, str) else ""
@@ -139,7 +139,7 @@ def _build_user_prompt(
 {issue_body or "(empty)"}
 ```
 
-## PR diff summary (from GitHub API; may be truncated)
+## PR diff summary (from GitHub via MCP; may be truncated)
 
 {files_section}
 
@@ -168,35 +168,56 @@ def _parse_review_verdict(model_text: str) -> tuple[bool | None, str]:
     return ok, reason
 
 
+def _pull_number_from_summary(pr_summary: dict[str, Any]) -> int | None:
+    for key in ("number", "pullNumber", "pull_number"):
+        v = pr_summary.get(key)
+        if v is not None:
+            try:
+                return int(v)
+            except (TypeError, ValueError):
+                continue
+    return None
+
+
 def process_pull(
     settings: Settings,
     state: ReviewStateStore,
     client: LlamaStackClient,
     model_id: str,
-    gh: GitHubClient,
+    gh: GitHubMcpClient,
     src: GitSource,
     owner: str,
     repo: str,
     pr_summary: dict[str, Any],
 ) -> None:
-    pr_number = int(pr_summary["number"])
-    head_sha = str(pr_summary.get("head", {}).get("sha") or "")
+    pr_number = _pull_number_from_summary(pr_summary)
+    if pr_number is None:
+        logger.warning("Skipping list entry with no PR number: %s", pr_summary)
+        return
+
+    full = gh.get_pull(owner, repo, pr_number)
+    head = full.get("head") if isinstance(full.get("head"), dict) else {}
+    head_sha = str(head.get("sha") or "")
 
     if not head_sha:
-        logger.warning("PR #%s has no head.sha; skipping", pr_number)
+        logger.warning("PR #%s has no head.sha from MCP; skipping", pr_number)
         return
 
     if state.should_skip_pr(pr_number, head_sha):
         logger.debug("Skipping PR #%s at sha %s (terminal outcome already recorded)", pr_number, head_sha[:7])
         return
 
-    full = gh.get_pull(owner, repo, pr_number)
-    if full.get("draft"):
+    is_draft = full.get("draft")
+    if is_draft is None:
+        is_draft = full.get("isDraft")
+    if is_draft:
         logger.info("PR #%s is draft; skipping", pr_number)
         return
 
     mergeable = full.get("mergeable")
-    mergeable_state = str(full.get("mergeable_state") or "")
+    if mergeable is None:
+        mergeable = full.get("is_mergeable")
+    mergeable_state = str(full.get("mergeable_state") or full.get("mergeableState") or "")
     if mergeable is None:
         logger.info("PR #%s mergeable not computed yet; will retry next poll", pr_number)
         return
@@ -350,7 +371,6 @@ def process_pull(
             repo,
             pr_number,
             settings.merge_method,
-            commit_title=None,
         )
         logger.info("Merged PR #%s: %s", pr_number, merge_result)
         state.record_outcome(
@@ -377,8 +397,6 @@ def run_forever(settings: Settings, state: ReviewStateStore) -> None:
         )
     owner, repo = src.owner, src.repo
 
-    gh = GitHubClient(settings.github_token, settings.github_api_base_url)
-
     client = LlamaStackClient(
         base_url=settings.llama_stack_base_url,
         api_key=settings.llama_stack_api_key,
@@ -386,6 +404,7 @@ def run_forever(settings: Settings, state: ReviewStateStore) -> None:
     )
     _register_mcp_endpoints(client, settings)
     model_id = _resolve_model_id(client, settings.llama_stack_model_id)
+    gh = GitHubMcpClient(client, settings)
 
     while True:
         try:

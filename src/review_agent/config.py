@@ -41,9 +41,9 @@ class Settings(BaseSettings):
         validation_alias="REVIEW_STATE_FILE",
     )
 
-    github_token: str = Field(
-        ...,
-        description="GitHub PAT: list PRs, read issues, merge (repo scope)",
+    github_token: str | None = Field(
+        None,
+        description="Optional: HTTPS git clone for local workspace only (not used for GitHub MCP).",
         validation_alias="GITHUB_TOKEN",
     )
 
@@ -55,6 +55,41 @@ class Settings(BaseSettings):
         ...,
         description="Comma-separated Llama Stack tool group IDs (e.g. GitHub MCP)",
         validation_alias="REVIEW_TOOL_GROUP_IDS",
+    )
+
+    mcp_invoke_tool_group_id: str | None = Field(
+        None,
+        description="If set, all GitHub MCP invoke_tool calls use this tool group id",
+        validation_alias="REVIEW_MCP_INVOKE_TOOL_GROUP_ID",
+    )
+
+    mcp_tool_list_pull_requests: str = Field(
+        "list_pull_requests",
+        validation_alias="REVIEW_MCP_TOOL_LIST_PULL_REQUESTS",
+    )
+    mcp_list_pull_requests_per_page: int = Field(100, validation_alias="REVIEW_MCP_LIST_PULL_REQUESTS_PER_PAGE")
+    mcp_list_pull_requests_extra_json: str | None = Field(
+        None,
+        description="Optional JSON object merged into list_pull_requests kwargs",
+        validation_alias="REVIEW_MCP_LIST_PULL_REQUESTS_EXTRA_JSON",
+    )
+
+    mcp_tool_pull_request_read: str = Field(
+        "pull_request_read",
+        validation_alias="REVIEW_MCP_TOOL_PULL_REQUEST_READ",
+    )
+    mcp_tool_issue_read: str = Field(
+        "issue_read",
+        validation_alias="REVIEW_MCP_TOOL_ISSUE_READ",
+    )
+    mcp_tool_merge_pull_request: str = Field(
+        "merge_pull_request",
+        validation_alias="REVIEW_MCP_TOOL_MERGE_PULL_REQUEST",
+    )
+    mcp_merge_pull_request_extra_json: str | None = Field(
+        None,
+        description="Optional JSON merged into merge_pull_request kwargs",
+        validation_alias="REVIEW_MCP_MERGE_PULL_REQUEST_EXTRA_JSON",
     )
 
     mcp_registrations_json: str | None = Field(
@@ -71,11 +106,6 @@ class Settings(BaseSettings):
     max_patch_chars_per_file: int = Field(12_000, validation_alias="REVIEW_MAX_PATCH_CHARS_PER_FILE")
     max_total_patch_chars: int = Field(100_000, validation_alias="REVIEW_MAX_TOTAL_PATCH_CHARS")
 
-    github_api_base_url: str = Field(
-        "https://api.github.com",
-        validation_alias="REVIEW_GITHUB_API_BASE_URL",
-    )
-
     dry_run_no_merge: bool = Field(False, validation_alias="REVIEW_DRY_RUN_NO_MERGE")
     merge_method: str = Field("merge", validation_alias="REVIEW_MERGE_METHOD")
 
@@ -88,6 +118,13 @@ class Settings(BaseSettings):
     def _positive(cls, v: int) -> int:
         if v < 1:
             raise ValueError("must be >= 1")
+        return v
+
+    @field_validator("mcp_list_pull_requests_per_page")
+    @classmethod
+    def _per_page(cls, v: int) -> int:
+        if v < 1 or v > 100:
+            raise ValueError("mcp_list_pull_requests_per_page must be 1..100")
         return v
 
     @field_validator(

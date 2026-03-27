@@ -1,6 +1,7 @@
 # Example OpenShift manifests. Adjust namespaces, image, and secrets for your cluster.
 #
-# GitHub PAT (repo scope): oc create secret generic review-agent-github --from-literal=token=YOUR_PAT -n <namespace>
+# GitHub auth for listing/merging PRs is configured on the GitHub MCP server wired to Llama Stack, not on this pod.
+# Optional: GITHUB_TOKEN here is only for private HTTPS git clone (local workspace); omit if the repo is public.
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -56,11 +57,12 @@ spec:
           env:
             - name: HOME
               value: /var/lib/review-agent
-            - name: GITHUB_TOKEN
-              valueFrom:
-                secretKeyRef:
-                  name: review-agent-github
-                  key: token
+            # Optional: private repo clone for workspace tools
+            # - name: GITHUB_TOKEN
+            #   valueFrom:
+            #     secretKeyRef:
+            #       name: review-agent-github
+            #       key: token
             # - name: LLAMA_STACK_API_KEY
             #   valueFrom:
             #     secretKeyRef:
